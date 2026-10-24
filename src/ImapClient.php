@@ -1108,14 +1108,21 @@ final class ImapClient implements ImapProtocol, ImapAclAware, ImapQuotaAware, Im
      * UTF8=ACCEPT is enabled. `create: true` creates the mailbox and
      * retries on `[TRYCREATE]`.
      *
-     * @param list<array{data?: string|resource, catenate?: list<array{text?: string, url?: string}>, flags?: list<SystemFlag|string>, internaldate?: DateTimeInterface}> $data
+     * `binary: true` on an entry sends it as `literal8` even without NUL,
+     * which requires BINARY. Servers may otherwise normalize line endings of
+     * an ordinary literal (Dovecot stores bare LF as CRLF), so use it when
+     * the message body must be stored byte for byte, for example with
+     * `Content-Transfer-Encoding: binary`.
+     *
+     * @param list<array{data?: string|resource, catenate?: list<array{text?: string, url?: string}>, flags?: list<SystemFlag|string>, internaldate?: DateTimeInterface, binary?: bool}> $data
      * @param array{create?: bool} $options
      *
      * @return MessageIdSet The new UIDs from `[APPENDUID ...]` responses
      *                      (UIDPLUS, RFC 4315), or empty when unreported.
      *
      * @throws CapabilityNotSupportedException If a `url` CATENATE part is
-     *                                            used without server CATENATE.
+     *                                            used without server CATENATE,
+     *                                            or binary content without BINARY.
      * @throws ServerResponseException          If the server rejects the APPEND.
      * @throws WireEncodingException            If stream input is invalid or cannot be read.
      */
@@ -1131,8 +1138,19 @@ final class ImapClient implements ImapProtocol, ImapAclAware, ImapQuotaAware, Im
                 continue;
             }
             $value = $message['data'] ?? '';
+            $binary = !empty($message['binary']);
+            if ($binary && !$this->getCapability()->query('BINARY')) {
+                throw new CapabilityNotSupportedException('Binary APPEND requires the BINARY extension.');
+            }
+            if (is_string($value) && $binary) {
+                // Route forced-binary strings through the stream path, the
+                // only literal encoding that can force literal8.
+                $value = fopen('php://temp', 'w+b');
+                fwrite($value, $message['data']);
+                rewind($value);
+            }
             if (!is_string($value)) {
-                $stream = new ImapWireStream($value, $this->utf8Enabled());
+                $stream = new ImapWireStream($value, $this->utf8Enabled() || $binary);
                 if ($stream->containsNul() && !$this->getCapability()->query('BINARY')) {
                     throw new CapabilityNotSupportedException('A stream containing NUL requires the BINARY extension.');
                 }

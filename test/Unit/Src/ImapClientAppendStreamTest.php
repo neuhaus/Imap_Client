@@ -188,4 +188,36 @@ class ImapClientAppendStreamTest extends TestCase
         ]]);
         self::assertSame("A1 APPEND INBOX (\\seen) \"24-Oct-2026 12:00:00 +0000\" {5}\r\nhello\r\n", implode('', $socket->rawWritten));
     }
+
+    public function testBinaryOptionForcesLiteral8ForStreamWithoutNul(): void
+    {
+        $socket = $this->socket('BINARY UIDPLUS', '+ ready', 'A1 OK done');
+        $this->client($socket)->append('INBOX', [['data' => $this->stream("a\nb\n"), 'binary' => true]]);
+        self::assertSame("A1 APPEND INBOX ~{4}\r\na\nb\n\r\n", implode('', $socket->rawWritten));
+    }
+
+    public function testBinaryOptionForcesLiteral8ForString(): void
+    {
+        $socket = $this->socket('BINARY UIDPLUS', '+ ready', 'A1 OK done');
+        $this->client($socket)->append('INBOX', [['data' => "a\nb", 'binary' => true]]);
+        self::assertSame("A1 APPEND INBOX ~{3}\r\na\nb\r\n", implode('', $socket->rawWritten));
+    }
+
+    public function testBinaryOptionWithoutBinaryCapabilityRejectsBatchBeforeAnyAppend(): void
+    {
+        $socket = $this->socket('UIDPLUS');
+        try {
+            $this->client($socket)->append('INBOX', [['data' => $this->stream('hello'), 'binary' => true]]);
+            self::fail('Expected missing BINARY rejection');
+        } catch (CapabilityNotSupportedException) {
+            self::assertSame([], $socket->rawWritten);
+        }
+    }
+
+    public function testStreamWithoutBinaryOptionStaysAnOrdinaryLiteral(): void
+    {
+        $socket = $this->socket('BINARY UIDPLUS', '+ ready', 'A1 OK done');
+        $this->client($socket)->append('INBOX', [['data' => $this->stream("a\nb")]]);
+        self::assertSame("A1 APPEND INBOX {3}\r\na\nb\r\n", implode('', $socket->rawWritten));
+    }
 }
